@@ -17,6 +17,7 @@ var debug = false
 var maxStreamDuration = 30 // in seconds
 var pingInterval = 1       // in seconds
 var retryDuration = 1      // in seconds
+var fastlyServiceName = "*"
 
 func streamEventsHandler(w http.ResponseWriter, r *http.Request) {
 	slog.Debug("New connection established")
@@ -99,6 +100,7 @@ func sendEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// CLI flags
+	flag.StringVar(&fastlyServiceName, "fastly-service-name", fastlyServiceName, "Fastly service name to accept logs from")
 	flag.IntVar(&port, "port", port, "port to listen on")
 	flag.IntVar(&pingInterval, "ping-interval", pingInterval, "interval between ping messages (in seconds, 0 to disable)")
 	flag.IntVar(&maxStreamDuration, "max-stream-duration", maxStreamDuration, "maximum duration for streaming connections (in seconds)")
@@ -136,6 +138,17 @@ func main() {
 			}
 		} else {
 			http.NotFoundHandler().ServeHTTP(w, r)
+		}
+	})
+
+	// Allow this tool to be a log destination for Fastly's real time logging feature
+	// https://developer.fastly.com/learning/integrations/logging/#http-challenge
+	router.HandleFunc("/.well-known/fastly/logging/challenge", func(w http.ResponseWriter, r *http.Request) {
+		if fastlyServiceName == "*" {
+			fmt.Fprintf(w, "*")
+		} else {
+			svcSum := stringToSha256(fastlyServiceName)
+			fmt.Fprintf(w, "%s", svcSum)
 		}
 	})
 
