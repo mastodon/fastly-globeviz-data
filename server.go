@@ -12,7 +12,7 @@ import (
 
 var sseChannel chan string
 
-var port = 4000
+var port = getIntEnv("PORT", 4000)
 var debug = false
 var maxStreamDuration = 30 // in seconds
 var pingInterval = 1       // in seconds
@@ -29,7 +29,7 @@ func streamEventsHandler(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 
 	if !ok {
-		slog.Debug("Unable to initialize flusher")
+		panic("Unable to initialize flusher")
 	}
 
 	// Send the retry info after the connection opens
@@ -80,7 +80,7 @@ func sendEventsHandler(w http.ResponseWriter, r *http.Request) {
 
 	for scanner.Scan() {
 		text := scanner.Text()
-		slog.Info(text)
+		slog.Debug("Received message", "message", text)
 		select {
 		case sseChannel <- text:
 		default:
@@ -100,9 +100,9 @@ func sendEventsHandler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	// CLI flags
 	flag.IntVar(&port, "port", port, "port to listen on")
-	flag.IntVar(&pingInterval, "ping-interval", port, "interval between ping messages (in seconds, 0 to disable)")
-	flag.IntVar(&maxStreamDuration, "max-stream-duration", port, "maximum duration for streaming connections (in seconds)")
-	flag.IntVar(&retryDuration, "retry-duration", port, "retry duration to advertise to clients (in seconds)")
+	flag.IntVar(&pingInterval, "ping-interval", pingInterval, "interval between ping messages (in seconds, 0 to disable)")
+	flag.IntVar(&maxStreamDuration, "max-stream-duration", maxStreamDuration, "maximum duration for streaming connections (in seconds)")
+	flag.IntVar(&retryDuration, "retry-duration", retryDuration, "retry duration to advertise to clients (in seconds)")
 	flag.BoolVar(&debug, "debug", debug, "enable debug logging")
 
 	flag.Parse()
