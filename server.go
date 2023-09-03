@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -11,16 +12,16 @@ import (
 	"time"
 )
 
-var sseChannel chan string
+var (
+	port              = "4000"
+	debug             = false
+	maxStreamDuration = 30 // in seconds
+	pingInterval      = 1  // in seconds
+	retryDuration     = 1  // in seconds
+	fastlyServiceName = "*"
+)
 
-var port = getIntEnv("PORT", 4000)
-var debug = false
-var maxStreamDuration = 30 // in seconds
-var pingInterval = 1       // in seconds
-var retryDuration = 1      // in seconds
-var fastlyServiceName = "*"
-
-func streamEventsHandler(w http.ResponseWriter, r *http.Request) {
+func streamEventsHandler(w http.ResponseWriter, r *http.Request, b *Broker[string]) {
 	slog.Debug("New connection established")
 
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -39,55 +40,44 @@ func streamEventsHandler(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	// This is used to force-close the connection after some time, clients will reconnect and it avoids long-running connections
-	timeout := time.After(time.Duration(maxStreamDuration) * time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(maxStreamDuration)*time.Second)
+	defer cancel()
 
 	// Send an empty message every `pingInterval` seconds
 	var pingTickerChan <-chan time.Time
+
 	if pingInterval != 0 {
 		pingTicker := time.NewTicker(time.Duration(pingInterval) * time.Second)
 		pingTickerChan = pingTicker.C
 
 		defer pingTicker.Stop()
-
 	}
 
-	id := 0
+	brokerChannel := b.Subscribe()
 
 	for {
 		select {
-		case msg := <-sseChannel:
-			fmt.Fprintf(w, "id: %d\nevent: traffic-log\ndata: %s\n\n", id, msg)
-			id++
+		case msg := <-brokerChannel:
+			fmt.Fprintf(w, "event: traffic-log\ndata: %s\n\n", msg)
 			flusher.Flush()
 		case <-pingTickerChan:
 			fmt.Fprintf(w, "data:\n\n")
 			flusher.Flush()
-		case <-timeout:
-			slog.Debug("Connection closed after timeout")
-			return
-
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			slog.Debug("Connection closed")
+			b.Unsubscribe(brokerChannel)
 			return
 		}
 	}
 }
 
-func sendEventsHandler(w http.ResponseWriter, r *http.Request) {
-	if sseChannel == nil {
-		panic("Channel not initialized")
-	}
-
+func sendEventsHandler(w http.ResponseWriter, r *http.Request, b *Broker[string]) {
 	scanner := bufio.NewScanner(r.Body)
 
 	for scanner.Scan() {
 		text := scanner.Text()
 		slog.Debug("Received message", "message", text)
-		select {
-		case sseChannel <- text:
-		default:
-			slog.Debug("No receivers, dropping message")
-		}
+		b.Publish(text)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -118,22 +108,20 @@ func main() {
 		programLevel.Set(slog.LevelDebug)
 	}
 
+	b := NewBroker[string]()
+	go b.Start()
+
 	router := http.NewServeMux()
-
-	sseChannel = make(chan string)
-
-	defer func() {
-		close(sseChannel)
-		sseChannel = nil
-	}()
 
 	router.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			switch r.Method {
 			case "GET":
-				streamEventsHandler(w, r)
+				streamEventsHandler(w, r, b)
 			case "POST":
-				sendEventsHandler(w, r)
+				sendEventsHandler(w, r, b)
+			case "OPTIONS":
+				w.Header().Set("Access-Control-Allow-Origin", "*")
 			}
 		} else {
 			http.NotFoundHandler().ServeHTTP(w, r)
