@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -93,15 +94,13 @@ func sendEventsHandler(w http.ResponseWriter, r *http.Request) {
 		slog.Error(err.Error())
 	}
 
-	slog.Info("Written")
-
 	w.WriteHeader(http.StatusOK)
 }
 
 func main() {
 	// CLI flags
 	flag.StringVar(&fastlyServiceName, "fastly-service-name", fastlyServiceName, "Fastly service name to accept logs from")
-	flag.IntVar(&port, "port", port, "port to listen on")
+	flag.StringVar(&port, "port", "4000", "port to listen on")
 	flag.IntVar(&pingInterval, "ping-interval", pingInterval, "interval between ping messages (in seconds, 0 to disable)")
 	flag.IntVar(&maxStreamDuration, "max-stream-duration", maxStreamDuration, "maximum duration for streaming connections (in seconds)")
 	flag.IntVar(&retryDuration, "retry-duration", retryDuration, "retry duration to advertise to clients (in seconds)")
@@ -110,9 +109,9 @@ func main() {
 	flag.Parse()
 
 	// Setup logging
-	var programLevel = new(slog.LevelVar) // Info by default
+	var programLevel slog.LevelVar // Info by default
 
-	logHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: programLevel})
+	logHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: &programLevel})
 	slog.SetDefault(slog.New(logHandler))
 
 	if debug {
@@ -152,9 +151,9 @@ func main() {
 		}
 	})
 
-	slog.Info(fmt.Sprintf("Server started on port %d", port))
+	slog.Info(fmt.Sprintf("Server started on port %s", port))
 
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), router); err != nil {
+	if err := http.ListenAndServe(net.JoinHostPort("", port), router); err != nil {
 		slog.Error(err.Error())
 	}
 }
