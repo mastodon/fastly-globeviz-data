@@ -13,12 +13,14 @@ import (
 )
 
 var (
+	httpClient        = &http.Client{}
 	port              = "4000"
 	debug             = false
 	maxStreamDuration = 30 // in seconds
 	pingInterval      = 1  // in seconds
 	retryDuration     = 1  // in seconds
 	fastlyServiceName = "*"
+	forwardRequestsTo = ""
 )
 
 func streamEventsHandler(w http.ResponseWriter, r *http.Request, b *Broker[string]) {
@@ -74,10 +76,18 @@ func streamEventsHandler(w http.ResponseWriter, r *http.Request, b *Broker[strin
 func sendEventsHandler(w http.ResponseWriter, r *http.Request, b *Broker[string]) {
 	scanner := bufio.NewScanner(r.Body)
 
+	var messages []string
+
 	for scanner.Scan() {
 		text := scanner.Text()
 		slog.Debug("Received message", "message", text)
+
+		messages = append(messages, text)
 		b.Publish(text)
+	}
+
+	if forwardRequestsTo != "" {
+		go sendDataToProxy(messages)
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -95,6 +105,7 @@ func main() {
 	flag.IntVar(&maxStreamDuration, "max-stream-duration", maxStreamDuration, "maximum duration for streaming connections (in seconds)")
 	flag.IntVar(&retryDuration, "retry-duration", retryDuration, "retry duration to advertise to clients (in seconds)")
 	flag.BoolVar(&debug, "debug", debug, "enable debug logging")
+	flag.StringVar(&forwardRequestsTo, "forward-requests-to", forwardRequestsTo, "URL to forward any incoming data to (optional)")
 
 	flag.Parse()
 
